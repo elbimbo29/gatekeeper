@@ -1,29 +1,53 @@
+# Gatekeeper 🔐
 
+## 📖 Overview
+Gatekeeper is a security‑focused authentication and authorization system built with **Python** and **Streamlit**.  
+It demonstrates modern role‑based access control, secure credential handling, and deployment pipelines using **Docker** and **GitHub Actions**.
 
-🛠️ Tech Stack
-Python  
-Core programming language for backend logic, authentication, and JWT handling.
+---
 
-Streamlit  
-Framework for building interactive dashboards and role‑based user interfaces.
+## ✨ Features
+- Role‑based dashboards for admins, users, and evaluators  
+- JWT authentication with expiry enforcement  
+- Password hashing using bcrypt  
+- Logs dashboard to view, filter, search, and export activity  
+- Database integration with SQLite  
+- CI/CD pipeline using Docker, GHCR, and Render  
 
-SQLAlchemy + SQLite  
-ORM and lightweight database for managing users, roles, and authentication data.
+---
 
-bcrypt  
-Secure password hashing to protect user credentials.
+## 🛠 Tech Stack
+- **Python** – core programming language  
+- **Streamlit** – interactive UI framework  
+- **SQLAlchemy + SQLite** – database ORM and lightweight DB  
+- **PyJWT** – JSON Web Token authentication  
+- **bcrypt** – password hashing for secure storage  
+- **Docker** – containerization for deployment  
+- **GitHub Actions** – CI/CD automation  
+- **GHCR (GitHub Container Registry)** – container registry for storing images  
+- **Render** – cloud hosting platform  
+- **GitHub** – version control and collaboration  
 
-PyJWT  
-JSON Web Token management for stateless session handling and role enforcement.
+## 🚀 Getting Started
 
-Docker  
-Containerization for consistent builds and deployment across environments.
+### 1. Clone the repository
+```bash
+git clone https://github.com/elbimbo29/gatekeeper.git
+cd gatekeeper
 
-GitHub Actions  
-CI/CD automation for testing, building, and publishing Docker images.
+### 2. Create a virtual environment
+```bash
+python -m venv .venv
 
-GHCR  
-Registry for hosting and distributing Docker images.
+### Activate the environment
+- **Windows**
+```bash
+.venv\Scripts\activate
 
-Render  
-Cloud hosting platform for deploying Gatekeeper in production.
+### 3. Install dependencies
+```bash
+pip install -r requirements.txt
+
+### 4. Run locally
+```bash
+streamlit run app.py

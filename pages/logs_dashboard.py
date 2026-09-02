@@ -1,63 +1,87 @@
-"""
-logs_dashboard.py
------------------
-Admin-only dashboard to view, filter, search, and export logs inside Streamlit.
-- Reads from gatekeeper.log
-- Displays last N lines (default: 50)
-- Provides filtering by log level (INFO, WARNING, ERROR)
-- Allows keyword search (e.g., username, event type)
-- Allows admins to download the full log file
-"""
-
 import streamlit as st
-import os
+from auth.check_auth import check_auth
+from auth.session_utils import clear_token
+from db.db_setup import SessionLocal
 
-LOG_FILE = "gatekeeper.log"
+# Defensive import: LogEntry may not exist in db.models
+try:
+    from db.models import LogEntry
+except Exception:
+    LogEntry = None
+
+st.set_page_config(page_title="Logs Dashboard", layout="wide")
 
 
-def logs_dashboard():
-    st.header("📜 Logs Dashboard")
+def fetch_logs(limit=500):
+    if LogEntry is None:
+        return []
+    db = SessionLocal()
+    try:
+        return db.query(LogEntry).order_by(LogEntry.timestamp.desc()).limit(limit).all()
+    finally:
+        db.close()
 
-    if not os.path.exists(LOG_FILE):
-        st.warning("No logs found yet.")
+
+def clear_session_and_redirect_to_login():
+    try:
+        clear_token()
+    except Exception:
+        pass
+    st.success("Logged out")
+    st.switch_page("pages/login.py")
+    st.stop()
+
+
+def render_sidebar_navigation():
+    st.sidebar.markdown("### Navigation")
+    if st.sidebar.button("Logs Dashboard"):
+        st.experimental_rerun()
+    if st.sidebar.button("User Dashboard"):
+        st.switch_page("pages/user_dashboard.py")
+        st.stop()
+    if st.sidebar.button("Admin Dashboard"):
+        st.switch_page("pages/admin_dashboard.py")
+        st.stop()
+
+
+def main():
+    # Allow logs users and admins (admin is allowed by check_auth)
+    if not check_auth(required_roles=["logs", "user"]):
         return
 
-    # Options for filtering
-    level_filter = st.selectbox("Filter by level:", ["All", "INFO", "WARNING", "ERROR"])
-    num_lines = st.slider("Number of lines to display:", 10, 200, 50)
+    render_sidebar_navigation()
 
-    # Keyword search
-    keyword = st.text_input("🔍 Search logs (e.g., username, event type)")
+    with st.container():
+        st.markdown("## Logs Dashboard")
+        st.markdown(
+            f"**User:** {st.session_state.get('username', 'Unknown')} | **Role:** {st.session_state.get('role', 'unknown')}"
+        )
+        if st.button("Logout"):
+            clear_session_and_redirect_to_login()
 
-    # Read last N lines from log file
-    with open(LOG_FILE, "r", encoding="utf-8") as f:
-        lines = f.readlines()[-num_lines:]
+    logs = []
+    try:
+        logs = fetch_logs(limit=500)
+    except Exception:
+        logs = []
 
-    # Apply level filter
-    if level_filter != "All":
-        lines = [line for line in lines if f"- {level_filter} -" in line]
+    if LogEntry is None:
+        st.info("Log model not available. No logs to show.")
+        return
 
-    # Apply keyword search
-    if keyword:
-        lines = [line for line in lines if keyword.lower() in line.lower()]
+    if not logs:
+        st.info("No logs available")
+        return
 
-    # Display logs with icons
-    for line in lines:
-        if "INFO" in line:
-            st.text(f"ℹ️ {line.strip()}")
-        elif "WARNING" in line:
-            st.text(f"⚠️ {line.strip()}")
-        elif "ERROR" in line:
-            st.text(f"🚨 {line.strip()}")
-        else:
-            st.text(line.strip())
+    st.subheader("Recent Logs")
+    for entry in logs[:200]:
+        ts = getattr(entry, "timestamp", None)
+        msg = getattr(entry, "message", str(entry))
+        ts_str = (
+            ts.strftime("%Y-%m-%d %H:%M:%S") if hasattr(ts, "strftime") else str(ts)
+        )
+        st.markdown(f"- **{ts_str}**  {msg}")
 
-    # --- Download button ---
-    with open(LOG_FILE, "r", encoding="utf-8") as f:
-        log_data = f.read()
-    st.download_button(
-        label="⬇️ Download Full Log File",
-        data=log_data,
-        file_name="gatekeeper.log",
-        mime="text/plain",
-    )
+
+if __name__ == "__main__":
+    main()

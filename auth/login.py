@@ -1,53 +1,25 @@
-"""
-login.py
---------
-Handles user login:
-- Fetches user from database by username
-- Verifies password using bcrypt (via auth_utils.verify_password)
-- Issues JWT with short or long expiry depending on 'Remember Me'
-- Stores JWT in secure cookie
-- Redirects based on role
-"""
-
 import streamlit as st
-import jwt
 import datetime
 from db.db_setup import SessionLocal
 from db.models import User
 from auth.auth_utils import verify_password
-from pages.admin_dashboard import admin_dashboard
-from pages.user_dashboard import user_dashboard
-from streamlit_cookies_manager import EncryptedCookieManager
+from auth.session_utils import cookies, create_jwt
 
-# --- JWT Config ---
-SECRET_KEY = "supersecretkey"  # 🔒 replace with env variable in production
+st.set_page_config(page_title="Login", page_icon="🔑", layout="centered")
 
-# --- Cookie Manager ---
-cookies = EncryptedCookieManager(
-    prefix="gatekeeper",
-    password="anothersecretkey",
-)
+st.title("🔐 Gatekeeper Login")
 
-if not cookies.ready():
-    st.stop()
+username = st.text_input("Username")
+password = st.text_input("Password", type="password")
+remember_me = st.checkbox("Remember me")
 
-
-def login(username: str, password: str, remember_me: bool = False):
-    """
-    Handles user login:
-    - Verifies password
-    - Issues JWT with short or long expiry depending on 'Remember Me'
-    - Stores JWT in secure cookie
-    """
+if st.button("Login"):
     db = SessionLocal()
     try:
         user = db.query(User).filter_by(username=username).first()
         if not user:
             st.error("❌ User not found")
-            return None
-
-        if verify_password(password, user.password_hash):
-            # Expiry: 1 hour if not remembered, 7 days if remembered
+        elif verify_password(password, user.password_hash):
             expiry = (
                 datetime.timedelta(days=7)
                 if remember_me
@@ -56,22 +28,26 @@ def login(username: str, password: str, remember_me: bool = False):
             payload = {
                 "username": user.username,
                 "role": user.role,
-                "exp": datetime.datetime.utcnow() + expiry,
+                "exp": datetime.datetime.now(datetime.UTC) + expiry,
             }
-            token = jwt.encode(payload, SECRET_KEY, algorithm="HS256")
 
-            cookies["jwt_token"] = token  # store JWT in cookie
+            token = create_jwt(payload)
+            cookies["jwt_token"] = token
+            cookies.save()
+
+            st.session_state["username"] = user.username
+            st.session_state["role"] = user.role
+            st.session_state["logged_in"] = True
+
             st.success(f"✅ Login successful! Welcome, {user.username} ({user.role})")
 
-            # Redirect based on role
+            # 🔄 Redirect to the correct dashboard
             if user.role == "admin":
-                admin_dashboard()
+                st.switch_page("admin_dashboard")
             else:
-                user_dashboard(user.username)
+                st.switch_page("user_dashboard")
 
-            return user
         else:
             st.error("❌ Invalid password")
-            return None
     finally:
         db.close()

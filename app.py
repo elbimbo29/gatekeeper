@@ -1,203 +1,210 @@
-"""
-app.py with JWT in cookies
---------------------------
-Main Streamlit entry point with JWT:
-- Signup and login flows
-- JWT token generation and verification
-- Role-based dashboards (admin vs user)
-- Stores JWT in secure cookie
-- Persists login across browser sessions
-- Handles token expiry and auto-logout
-- 'Remember Me' option for longer sessions
-- Sidebar shows countdown + progress bar (color-coded)
-"""
-
 import streamlit as st
-import jwt
-import datetime
+from datetime import datetime, timedelta, timezone
+import logging
+
 from db.db_setup import SessionLocal
 from db.models import User
-from auth.auth_utils import hash_password, verify_password
-from pages.admin_dashboard import admin_dashboard
-from pages.user_dashboard import user_dashboard
-from streamlit_cookies_manager import EncryptedCookieManager
-from pages.logs_dashboard import logs_dashboard
+from auth.auth_utils import verify_password, hash_password
+from auth.session_utils import cookies, create_jwt, decode_jwt, clear_token
 
-# --- JWT Config ---
-SECRET_KEY = "supersecretkey"  # 🔒 replace with env variable in production
+# Optional theme component; if missing, comment out or replace
+try:
+    from components.theme import apply_theme
 
-# --- Cookie Manager ---
-cookies = EncryptedCookieManager(
-    prefix="gatekeeper",  # cookie namespace
-    password="anothersecretkey",  # 🔒 encryption key
-)
+    apply_theme(default="Dark")
+except Exception:
+    pass
 
-if not cookies.ready():
-    st.stop()
+st.set_page_config(page_title="Gatekeeper", page_icon="🔐", layout="wide")
+logging.basicConfig(level=logging.INFO)
 
 
-def create_jwt(username: str, role: str, remember_me: bool = False):
+def show_login_signup():
     """
-    Create a JWT token for the authenticated user.
-    - Includes username and role in the payload
-    - Expiry: 1 hour if not remembered, 7 days if 'Remember Me' checked
-    - Encodes payload using HS256 algorithm and SECRET_KEY
+    Main authentication UI shown in the page body.
+    Keeps Login / Signup radio in the main column only and uses unique keys.
     """
-    expiry = datetime.timedelta(days=7) if remember_me else datetime.timedelta(hours=1)
-    payload = {
-        "username": username,
-        "role": role,
-        "exp": datetime.datetime.utcnow() + expiry,
-    }
-    token = jwt.encode(payload, SECRET_KEY, algorithm="HS256")
-    return token
-
-
-def decode_jwt(token: str):
-    """
-    Decode and validate a JWT token.
-    - Verifies signature using SECRET_KEY
-    - Returns payload if valid
-    - Handles expired tokens (auto-logout)
-    - Handles invalid tokens (clears session)
-    """
-    try:
-        payload = jwt.decode(token, SECRET_KEY, algorithms=["HS256"])
-        return payload
-    except jwt.ExpiredSignatureError:
-        st.error("❌ Token expired. Please log in again.")
-        cookies["jwt_token"] = ""  # clear cookie on expiry
-        return None
-    except jwt.InvalidTokenError:
-        st.error("❌ Invalid token.")
-        cookies["jwt_token"] = ""  # clear cookie on invalid token
-        return None
-
-
-# --- Signup Flow ---
-def signup(username: str, password: str, role: str = "user"):
     db = SessionLocal()
-    try:
-        existing_user = db.query(User).filter_by(username=username).first()
-        if existing_user:
-            st.error("❌ Username already exists")
-            return
-        hashed_pw = hash_password(password)
-        new_user = User(username=username, password_hash=hashed_pw, role=role)
-        db.add(new_user)
-        db.commit()
-        st.success(f"✅ User '{username}' created successfully!")
-    finally:
-        db.close()
+    st.info("🚀 Sign up or log in to access your dashboards.")
 
+    # Authentication radio stays in the main column only and uses a unique key
+    auth_choice = st.radio(
+        "Authentication", ["Login", "Signup"], key="auth_choice_main", horizontal=True
+    )
 
-# --- Login Flow ---
-def login(username: str, password: str, remember_me: bool = False):
-    db = SessionLocal()
-    try:
-        user = db.query(User).filter_by(username=username).first()
-        if not user:
-            st.error("❌ User not found")
-            return None
-        if verify_password(password, user.password_hash):
-            token = create_jwt(user.username, user.role, remember_me)
-            cookies["jwt_token"] = token  # store JWT in cookie
+    if auth_choice == "Login":
+        st.subheader("🔐 Login")
+        username = st.text_input("Username", key="login_username_main")
+        password = st.text_input("Password", type="password", key="login_password_main")
+        remember_me = st.checkbox("Remember me (7 days)", key="remember_me_main")
+
+        if st.button("🚀 Login", key="login_button_main"):
+            user = db.query(User).filter(User.username == username).first()
+            if not user:
+                st.error("❌ User not found")
+                db.close()
+                return
+
+            if not verify_password(password, user.password_hash):
+                st.error("❌ Invalid password")
+                db.close()
+                return
+
+            expiry = timedelta(days=7) if remember_me else timedelta(hours=1)
+            expiry_time = datetime.now(timezone.utc) + expiry
+            payload = {
+                "username": user.username,
+                "role": user.role,
+                "exp": int(expiry_time.timestamp()),
+            }
+            token = create_jwt(payload)
+
+            try:
+                cookies["jwt_token"] = token
+                cookies["role"] = user.role
+                cookies.save()
+            except Exception:
+                st.warning(
+                    "⚠️ Could not persist cookies; session will last until browser reload."
+                )
+
+            st.session_state["username"] = user.username
+            st.session_state["role"] = user.role
+            st.session_state["logged_in"] = True
+
+            logging.info("User %s logged in (role=%s)", user.username, user.role)
             st.success(f"✅ Login successful! Welcome, {user.username} ({user.role})")
-            return user
-        else:
-            st.error("❌ Invalid password")
-            return None
-    finally:
-        db.close()
-
-
-# --- Logout Flow ---
-def logout():
-    cookies["jwt_token"] = ""  # clear cookie
-    st.info("👋 You have been logged out.")
-
-
-# --- Session Check ---
-def is_authenticated():
-    token = cookies.get("jwt_token")
-    if token:
-        payload = decode_jwt(token)
-        if payload:
-            return payload
-    return None
-
-
-# --- Streamlit UI ---
-def main():
-    # --- UI Config ---
-    # Sets app title, icon, and layout for a polished look
-    st.set_page_config(page_title="Gatekeeper App", page_icon="🔐", layout="centered")
-    st.title("🔐 Gatekeeper Authentication System")
-
-    payload = is_authenticated()
-
-    if payload:
-        # --- Sidebar session info ---
-        # Calculate remaining time until JWT expiry
-        expiry_time = datetime.datetime.fromtimestamp(payload["exp"])
-        remaining = expiry_time - datetime.datetime.utcnow()
-        total_seconds = int(remaining.total_seconds())
-        hours, remainder = divmod(total_seconds, 3600)
-        minutes, seconds = divmod(remainder, 60)
-
-        # Progress fraction (max 7 days session length)
-        max_session_seconds = 7 * 24 * 3600
-        progress_fraction = max(total_seconds, 0) / max_session_seconds
-
-        # Color-coded indicator based on remaining time
-        if progress_fraction > 0.5:
-            bar_color = "🟢"
-        elif progress_fraction > 0.2:
-            bar_color = "🟡"
-        else:
-            bar_color = "🔴"
-
-        # Sidebar display: user info + countdown + color indicator
-        st.sidebar.markdown(
-            f"**Logged in as:** {payload['username']} ({payload['role']})\n\n"
-            f"**Session expires in:** {hours}h {minutes}m {seconds}s {bar_color}"
-        )
-        st.sidebar.progress(progress_fraction)
-
-        # Logout button
-        if st.sidebar.button("🚪 Logout"):
-            logout()
-
-        # Role-based dashboards
-        if payload["role"] == "admin":
-            admin_dashboard()
-        else:
-            user_dashboard(payload["username"])
+            st.info("Use the sidebar to open the appropriate dashboard.")
+            db.close()
+            return
 
     else:
-        # --- Authentication menu ---
-        st.sidebar.header("🔑 Authentication")
-        menu = st.sidebar.radio("Choose an option:", ["Signup 📝", "Login 🔐"])
+        st.subheader("📝 Create a New Account")
+        new_username = st.text_input("New Username", key="signup_username_main")
+        new_password = st.text_input(
+            "Password", type="password", key="signup_password_main"
+        )
+        role = st.selectbox("Role", ["user", "admin", "logs"], key="signup_role_main")
+        if st.button("✅ Signup", key="signup_button_main"):
+            existing = db.query(User).filter(User.username == new_username).first()
+            if existing:
+                st.error("❌ Username already exists.")
+            else:
+                new_user = User(
+                    username=new_username,
+                    password_hash=hash_password(new_password),
+                    role=role,
+                )
+                db.add(new_user)
+                db.commit()
+                st.success("✅ Signup successful! Please log in.")
+                logging.info("New user %s signed up with role %s", new_username, role)
+                db.close()
+                return
 
-        if menu.startswith("Signup"):
-            st.subheader("📝 Create a New Account")
-            # Split form into two columns for cleaner layout
-            col1, col2 = st.columns(2)
+    db.close()
+
+
+def header_bar():
+    """
+    Top header showing current user and a logout button.
+    Logout clears token and reruns the app to show login UI.
+    """
+    username = st.session_state.get("username", "Guest")
+    role = st.session_state.get("role", "unknown")
+    col1, col2 = st.columns([4, 1])
+    with col1:
+        st.markdown("## 🔐 Gatekeeper")
+        st.markdown(f"**User:** {username} | **Role:** {role}")
+    with col2:
+        if st.button("Logout", key="header_logout"):
+            try:
+                clear_token()
+            except Exception:
+                logging.exception("Failed to clear token on logout.")
+            st.success("Logged out")
+            st.experimental_rerun()
+
+
+def sidebar_navigation():
+    """
+    Sidebar navigation. Uses unique keys to avoid collisions with main UI.
+    All switches are followed by st.stop() to prevent further execution.
+    """
+    st.sidebar.markdown("### Navigation")
+    if st.sidebar.button("Login Page", key="sidebar_login_page"):
+        st.switch_page("pages/login.py")
+        st.stop()
+
+    if st.sidebar.button("Admin Dashboard", key="sidebar_admin"):
+        st.switch_page("pages/admin_dashboard.py")
+        st.stop()
+
+    if st.sidebar.button("User Dashboard", key="sidebar_user"):
+        st.switch_page("pages/user_dashboard.py")
+        st.stop()
+
+    if st.sidebar.button("Logs Dashboard", key="sidebar_logs"):
+        st.switch_page("pages/logs_dashboard.py")
+        st.stop()
+
+    st.sidebar.markdown("---")
+    st.sidebar.markdown("Theme")
+    st.sidebar.radio("Theme", ["Dark", "Light"], index=0, key="sidebar_theme")
+
+
+def main():
+    st.title("Gatekeeper — Landing")
+    st.write(
+        "This is the landing page. Use the sidebar to navigate to dashboards after login."
+    )
+
+    # Render sidebar navigation (keeps left menu consistent)
+    sidebar_navigation()
+
+    # Try to read token from cookies; if present and valid, populate session_state
+    token = None
+    try:
+        token = cookies.get("jwt_token")
+    except Exception:
+        token = None
+
+    if token:
+        try:
+            payload = decode_jwt(token)
+        except Exception:
+            payload = None
+
+        if payload:
+            st.session_state["username"] = payload.get("username")
+            st.session_state["role"] = payload.get("role")
+            st.session_state["logged_in"] = True
+
+            header_bar()
+
+            st.markdown("### Quick open")
+            col1, col2, col3 = st.columns(3)
             with col1:
-                username = st.text_input("Username")
-                role = st.selectbox("Role", ["user", "admin"])
+                if st.button("Open Admin Dashboard", key="quick_admin"):
+                    st.switch_page("pages/admin_dashboard.py")
+                    st.stop()
             with col2:
-                password = st.text_input("Password", type="password")
-            if st.button("✅ Signup"):
-                signup(username, password, role)
+                if st.button("Open Logs Dashboard", key="quick_logs"):
+                    st.switch_page("pages/logs_dashboard.py")
+                    st.stop()
+            with col3:
+                if st.button("Open User Dashboard", key="quick_user"):
+                    st.switch_page("pages/user_dashboard.py")
+                    st.stop()
 
-        elif menu.startswith("Login"):
-            st.subheader("🔐 Login to Your Account")
-            username = st.text_input("Username")
-            password = st.text_input("Password", type="password")
-            remember_me = st.checkbox("Remember Me")  # ✅ new option
-            if st.button("🚀 Login"):
-                login(username, password, remember_me)
+            st.markdown("---")
+            st.write(
+                "If a dashboard looks broken, logout and log back in. Clear cookies if needed."
+            )
+            return
+
+    # If no valid token, show login/signup UI in the main column
+    show_login_signup()
 
 
 if __name__ == "__main__":

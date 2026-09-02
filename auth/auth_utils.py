@@ -1,24 +1,20 @@
-"""
-auth_utils.py
--------------
-Utility functions for authentication:
-- Hashing passwords with bcrypt
-- Verifying passwords
-"""
-
 import bcrypt
 
 
-# Hash a plain-text password
-def hash_password(plain_password: str) -> str:
-    # Generate salt and hash the password
-    salt = bcrypt.gensalt()
-    hashed = bcrypt.hashpw(plain_password.encode("utf-8"), salt)
+def hash_password(password: str) -> str:
+    """
+    Hash a plain text password using bcrypt.
+    """
+    salt = bcrypt.gensalt(rounds=12)  # 12 is a good balance of security and speed
+    hashed = bcrypt.hashpw(password.encode("utf-8"), salt)
     return hashed.decode("utf-8")
 
 
-# Verify a plain-text password against stored hash
-def verify_password(plain_password: str, hashed_password: str) -> bool:
-    return bcrypt.checkpw(
-        plain_password.encode("utf-8"), hashed_password.encode("utf-8")
-    )
+def verify_password(password: str, hashed: str) -> bool:
+    """
+    Verify a plain text password against a bcrypt hash.
+    """
+    try:
+        return bcrypt.checkpw(password.encode("utf-8"), hashed.encode("utf-8"))
+    except Exception:
+        return False
